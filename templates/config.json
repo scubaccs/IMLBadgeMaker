@@ -1,0 +1,24 @@
+{
+  "templates": [
+    {
+      "id": "volunteer",
+      "name": "Volunteer Badge",
+      "file": "IML_2025_Volunteer_Template.pdf",
+      "textConfig": {
+        "bottomPosition": 44,
+        "fontSize": 17,
+        "color": {"r": 0, "g": 0, "b": 0}
+      }
+    },
+    {
+      "id": "staff",
+      "name": "Staff Badge",
+      "file": "IML_2025_Staff_Template.pdf",
+      "textConfig": {
+        "bottomPosition": 44,
+        "fontSize": 17,
+        "color": {"r": 0, "g": 0, "b": 0}
+      }
+    }
+  ]
+}

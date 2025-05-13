@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Name Generator</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding-top: 0px;
+            padding-left: 20px;
+            padding-right: 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 0px;
+            margin-top: 0px;
+        }
+        .main-container {
+            display: flex;
+            gap: 30px;
+        }
+        .left-column {
+            flex: 1;
+            min-width: 300px;
+        }
+        .right-column {
+            flex: 2;
+        }
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            margin-bottom: 25px;
+        }
+        label {
+            font-weight: bold;
+        }
+        input[type="text"], select {
+            padding: 12px;
+            font-size: 16px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        select {
+            cursor: pointer;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 4px 0;
+            cursor: pointer;
+            border-radius: 4px;
+            width: 100%;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .pdf-container {
+            margin-top: 0;
+        }
+        #pdfEmbed {
+            width: 100%;
+            height: 600px;
+            border: 1px solid #ccc;
+        }
+        .hidden {
+            display: none;
+        }
+        .status {
+            text-align: left;
+            margin: 10px 0;
+            font-style: italic;
+            color: #666;
+        }
+        .error {
+            color: red;
+            font-weight: bold;
+        }
+        .loader {
+            border: 5px solid #f3f3f3;
+            border-radius: 50%;
+            border-top: 5px solid #3498db;
+            width: 30px;
+            height: 30px;
+            animation: spin 2s linear infinite;
+            margin: 20px auto;
+            display: none;
+        }
+        .button-group {
+            display: flex;
+            gap: 10px;
+        }
+        .button-group button {
+            flex: 1;
+        }
+        .template-preview {
+            max-width: 100px;
+            margin-right: 10px;
+            vertical-align: middle;
+        }
+        .template-option {
+            display: flex;
+            align-items: center;
+            padding: 5px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        /* Responsive adjustments */
+        @media (max-width: 768px) {
+            .main-container {
+                flex-direction: column;
+            }
+            .left-column, .right-column {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>IML Badge Maker</h1>
+    
+    <div class="main-container">
+        <!-- Left Column - Form Controls -->
+        <div class="left-column">
+            <div class="form-group">
+                <label for="templateSelect">Select Template:</label>
+                <select id="templateSelect">
+                    <option value="loading">Loading templates...</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="nameInput">Enter Name:</label>
+                <input type="text" id="nameInput" placeholder="Type name here...">
+            </div>
+
+            <button id="generateBtn">Generate Badge</button>
+            <div class="loader" id="loader"></div>
+            <div class="status" id="generateStatus"></div>
+
+            <div id="actionButtons" class="button-group hidden">
+                <button id="printBtn">Print Badge</button>
+                <button id="downloadBtn">Download Badge</button>
+            </div>
+        </div>
+
+        <!-- Right Column - PDF Preview -->
+        <div class="right-column">
+            <div class="pdf-container" id="pdfViewer">
+                <iframe id="pdfEmbed"></iframe>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Base paths
+        const TEMPLATES_PATH = './templates/';
+        const TEMPLATES_CONFIG_PATH = './templates/config.json';
+        const FONT_PATH = './ObviouslyNarwSemi.ttf';
+        
+        // State variables
+        let templatesConfig = null;
+        let templatePdfBytes = null;
+        let fontBytes = null;
+        let generatedPdfDataUri = null;
+        let isLoading = false;
+        let currentTemplate = null;
+        
+        // Elements
+        const templateSelect = document.getElementById('templateSelect');
+        const nameInput = document.getElementById('nameInput');
+        const generateBtn = document.getElementById('generateBtn');
+        const generateStatus = document.getElementById('generateStatus');
+        const pdfViewer = document.getElementById('pdfViewer');
+        const pdfEmbed = document.getElementById('pdfEmbed');
+        const printBtn = document.getElementById('printBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const loader = document.getElementById('loader');
+        const actionButtons = document.getElementById('actionButtons');
+
+        // Initially hide the PDF embed until generated
+        pdfEmbed.style.display = 'none';
+
+        // Initialization - load templates config, default template, and font when page loads
+        window.addEventListener('DOMContentLoaded', async () => {
+            try {
+                setLoading(true);
+                generateStatus.textContent = 'Loading resources...';
+                
+                // Load templates configuration
+                await loadTemplatesConfig();
+                
+                // Load font
+                const fontResponse = await fetch(FONT_PATH);
+                if (!fontResponse.ok) {
+                    throw new Error(`Failed to load font: ${fontResponse.statusText}`);
+                }
+                const fontArrayBuffer = await fontResponse.arrayBuffer();
+                fontBytes = new Uint8Array(fontArrayBuffer);
+                
+                // Load first template as default
+                if (templatesConfig && templatesConfig.templates && templatesConfig.templates.length > 0) {
+                    currentTemplate = templatesConfig.templates[0];
+                    await loadTemplateFile(currentTemplate.file);
+                }
+                
+                generateStatus.textContent = 'Resources loaded successfully! Enter a name and click Generate.';
+                setLoading(false);
+            } catch (error) {
+                console.error('Error loading resources:', error);
+                generateStatus.textContent = `Error: ${error.message}`;
+                generateStatus.className = 'status error';
+                setLoading(false);
+            }
+        });
+
+        // Load templates configuration from JSON file
+        async function loadTemplatesConfig() {
+            try {
+                const response = await fetch(TEMPLATES_CONFIG_PATH);
+                if (!response.ok) {
+                    throw new Error(`Failed to load templates configuration: ${response.statusText}`);
+                }
+                
+                templatesConfig = await response.json();
+                
+                // Clear the placeholder option
+                templateSelect.innerHTML = '';
+                
+                // Populate template dropdown
+                templatesConfig.templates.forEach(template => {
+                    const option = document.createElement('option');
+                    option.value = template.id;
+                    option.textContent = template.name;
+                    templateSelect.appendChild(option);
+                });
+                
+                // Set the first template as selected by default
+                if (templatesConfig.templates.length > 0) {
+                    templateSelect.value = templatesConfig.templates[0].id;
+                }
+            } catch (error) {
+                console.error('Error loading templates config:', error);
+                generateStatus.textContent = `Error loading templates: ${error.message}`;
+                generateStatus.className = 'status error';
+                
+                // Add a fallback option
+                const option = document.createElement('option');
+                option.value = "error";
+                option.textContent = "Error loading templates";
+                templateSelect.innerHTML = '';
+                templateSelect.appendChild(option);
+            }
+        }
+
+        // Load PDF template file
+        async function loadTemplateFile(templateFile) {
+            try {
+                const fullPath = TEMPLATES_PATH + templateFile;
+                const response = await fetch(fullPath);
+                if (!response.ok) {
+                    throw new Error(`Failed to load template PDF: ${response.statusText}`);
+                }
+                
+                const arrayBuffer = await response.arrayBuffer();
+                templatePdfBytes = new Uint8Array(arrayBuffer);
+                return true;
+            } catch (error) {
+                console.error('Error loading template PDF:', error);
+                generateStatus.textContent = `Error loading template: ${error.message}`;
+                generateStatus.className = 'status error';
+                return false;
+            }
+        }
+
+        // Template selection change handler
+        templateSelect.addEventListener('change', async function() {
+            const templateId = this.value;
+            
+            if (templateId === 'loading' || templateId === 'error') {
+                return;
+            }
+            
+            setLoading(true);
+            generateStatus.textContent = 'Loading template...';
+            
+            // Find the selected template in the config
+            const selectedTemplate = templatesConfig.templates.find(t => t.id === templateId);
+            
+            if (selectedTemplate) {
+                currentTemplate = selectedTemplate;
+                const success = await loadTemplateFile(selectedTemplate.file);
+                
+                if (success) {
+                    generateStatus.textContent = `Template "${selectedTemplate.name}" loaded. Enter a name and click Generate.`;
+                    generateStatus.className = 'status';
+                }
+            } else {
+                generateStatus.textContent = 'Error: Template not found in configuration.';
+                generateStatus.className = 'status error';
+            }
+            
+            setLoading(false);
+        });
+
+        // Generate PDF with name
+        generateBtn.addEventListener('click', async function() {
+            const name = nameInput.value.trim();
+            if (!name) {
+                generateStatus.textContent = 'Please enter a name.';
+                generateStatus.className = 'status error';
+                return;
+            }
+
+            if (!templatePdfBytes || !fontBytes) {
+                generateStatus.textContent = 'Resources are still loading. Please wait...';
+                generateStatus.className = 'status error';
+                return;
+            }
+
+            setLoading(true);
+            generateStatus.textContent = 'Generating PDF...';
+            generateStatus.className = 'status';
+
+            try {
+                await generatePdf(name);
+                generateStatus.textContent = 'PDF generated successfully!';
+                
+                // Show PDF and action buttons
+                pdfEmbed.style.display = 'block';
+                actionButtons.classList.remove('hidden');
+                
+                setLoading(false);
+            } catch (error) {
+                console.error(error);
+                generateStatus.textContent = 'Error generating PDF: ' + error.message;
+                generateStatus.className = 'status error';
+                setLoading(false);
+            }
+        });
+
+        async function generatePdf(name) {
+            const PDFLib = window.PDFLib;
+            const { rgb } = PDFLib;
+            const fontkit = window.fontkit;
+
+            // Load the PDF document
+            const pdfDoc = await PDFLib.PDFDocument.load(templatePdfBytes);
+            
+            // Register fontkit
+            pdfDoc.registerFontkit(fontkit);
+            
+            // Get the first page
+            const pages = pdfDoc.getPages();
+            if (pages.length === 0) {
+                throw new Error('The PDF has no pages.');
+            }
+
+            const firstPage = pages[0];
+            const { width, height } = firstPage.getSize();
+            
+            // Get text positioning from the current template configuration
+            // If none specified, use default values
+            const textConfig = currentTemplate && currentTemplate.textConfig ? currentTemplate.textConfig : {
+                bottomPosition: 44,
+                fontSize: 22,
+                color: { r: 0, g: 0, b: 0 } // Black
+            };
+            
+            // Position for name
+            const bottomPosition = textConfig.bottomPosition || 44;
+            const fontSize = textConfig.fontSize || 22;
+            const textColor = textConfig.color ? 
+                rgb(textConfig.color.r, textConfig.color.g, textConfig.color.b) : 
+                rgb(0, 0, 0); // Default to black
+
+            // Embed the custom font
+            try {
+                const customFont = await pdfDoc.embedFont(fontBytes);
+                
+                // Calculate text positioning - centered and at the specified position
+                const textWidth = customFont.widthOfTextAtSize(name, fontSize);
+                const x = (width - textWidth) / 2;
+                const y = bottomPosition; // Position from bottom
+                
+                // Draw the name with the custom font on first page
+                firstPage.drawText(name, {
+                    x,
+                    y,
+                    size: fontSize,
+                    font: customFont,
+                    color: textColor
+                });
+                
+                // Create a second page that is identical to the first
+                // First, clone the template page
+                const [secondPage] = await pdfDoc.copyPages(pdfDoc, [0]);
+                
+                // Add the cloned page to the document
+                pdfDoc.addPage(secondPage);
+                
+            } catch (error) {
+                console.error('Error embedding custom font:', error);
+                generateStatus.textContent = 'Error embedding custom font. Falling back to standard font.';
+                
+                // Fallback to standard font
+                const fallbackFont = await pdfDoc.embedFont(PDFLib.StandardFonts.HelveticaBold);
+                const textWidth = fallbackFont.widthOfTextAtSize(name, fontSize);
+                const x = (width - textWidth) / 2;
+                const y = bottomPosition;
+                
+                // Draw the name on the first page
+                firstPage.drawText(name, {
+                    x,
+                    y,
+                    size: fontSize,
+                    font: fallbackFont,
+                    color: textColor
+                });
+                
+                // Create a second identical page
+                const [secondPage] = await pdfDoc.copyPages(pdfDoc, [0]);
+                pdfDoc.addPage(secondPage);
+            }
+
+            // Serialize the PDFDocument to bytes
+            const pdfBytes = await pdfDoc.save();
+            
+            // Convert to data URI for display
+            const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+            generatedPdfDataUri = URL.createObjectURL(blob);
+            
+            // Display in iframe
+            pdfEmbed.src = generatedPdfDataUri;
+        }
+
+        // Print PDF
+        printBtn.addEventListener('click', function() {
+            const iframe = document.getElementById('pdfEmbed');
+            iframe.contentWindow.focus();
+            iframe.contentWindow.print();
+        });
+
+        // Download PDF
+        downloadBtn.addEventListener('click', function() {
+            if (!generatedPdfDataUri) return;
+            
+            const downloadLink = document.createElement('a');
+            downloadLink.href = generatedPdfDataUri;
+            
+            // Use template name in the downloaded file
+            const templateName = currentTemplate ? currentTemplate.name.replace(/\s+/g, '_') : 'Badge';
+            downloadLink.download = `${nameInput.value.trim()}_${templateName}.pdf`;
+            
+            document.body.appendChild(downloadLink);
+            downloadLink.click();
+            document.body.removeChild(downloadLink);
+        });
+
+        // Helper function to toggle loading state
+        function setLoading(loading) {
+            isLoading = loading;
+            loader.style.display = loading ? 'block' : 'none';
+            generateBtn.disabled = loading;
+            templateSelect.disabled = loading;
+        }
+    </script>
+</body>
+</html>
